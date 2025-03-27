@@ -46,3 +46,6 @@ A classic Tetris game implementation in C++ using the terminal with colored Unic
 - The game uses `usleep(500000)` for a 0.5-second delay between updates. Adjust this value in the `run()` function for faster or slower gameplay.
 - Designed for terminals supporting Unicode and ANSI escape codes (e.g., most modern Linux/macOS terminals).
 - Windows users may need to use WSL or a compatible terminal emulator for full functionality.
+## Author
+-Pooja Makwana (202404020)
+-Jainil Sutariya (202404042)
