@@ -1,19 +1,23 @@
 #include <iostream>
-#include <vector>
 #include <cstdlib>
 #include <ctime>
 #include <unistd.h>
-#include <termios.h>
+#include <algorithm>
+
+#ifdef _WIN32
+#include <conio.h>  // Windows: kbhit() and getch()
+#else
+#include <fcntl.h>
 #include <sys/ioctl.h>
+#endif
 
 using namespace std;
 
 const int WIDTH = 10;
 const int HEIGHT = 20;
-const string EMPTY = "  ";
+const char EMPTY = ' ';
 
-// Tetromino shapes with Unicode colored blocks
-const string COLORS[7] = {"🟦", "🟨", "🟪", "🟩", "🟥", "🟧", "⬜"};
+// Tetromino shapes
 const int tetrominoes[7][4][4] = {
     {{1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}, // I
     {{1, 1, 0, 0}, {1, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}, // O
@@ -24,35 +28,26 @@ const int tetrominoes[7][4][4] = {
     {{0, 0, 1, 0}, {1, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}  // L
 };
 
+const char shapeChars[7] = {'I', 'O', 'T', 'S', 'Z', 'J', 'L'};
+
 class Tetromino {
 public:
-    int shape[4][4];
+    int shape[4][4] = {};
     int x, y;
-    string color;
+    char blockChar;
 
-    Tetromino(int type) : color(COLORS[type]) {
+    Tetromino(int type) : blockChar(shapeChars[type]) {
         for (int i = 0; i < 4; i++)
             for (int j = 0; j < 4; j++)
                 shape[i][j] = tetrominoes[type][i][j];
         x = WIDTH / 2 - 2;
         y = 0;
     }
-
-    void rotate() {
-        int temp[4][4] = {0};
-        for (int i = 0; i < 4; i++)
-            for (int j = 0; j < 4; j++)
-                temp[j][3 - i] = shape[i][j];
-
-        for (int i = 0; i < 4; i++)
-            for (int j = 0; j < 4; j++)
-                shape[i][j] = temp[i][j];
-    }
 };
 
 class GameBoard {
 public:
-    string grid[HEIGHT][WIDTH];
+    char grid[HEIGHT][WIDTH];
 
     GameBoard() {
         for (int i = 0; i < HEIGHT; i++)
@@ -65,12 +60,12 @@ public:
         for (int i = 0; i < HEIGHT; i++) {
             cout << "|";
             for (int j = 0; j < WIDTH; j++) {
-                string displayChar = grid[i][j];
+                char displayChar = grid[i][j];
 
                 for (int ti = 0; ti < 4; ti++) {
                     for (int tj = 0; tj < 4; tj++) {
                         if (t.shape[ti][tj] && (i == t.y + ti) && (j == t.x + tj)) {
-                            displayChar = t.color;
+                            displayChar = t.blockChar;
                         }
                     }
                 }
@@ -79,20 +74,22 @@ public:
             cout << "|\n";
         }
         cout << " ";
-        for (int i = 0; i < WIDTH; i++) cout << "--";
+        for (int i = 0; i < WIDTH; i++) cout << "-";
         cout << " \n";
-        cout << "[A] Left  [D] Right  [S] Down  [W] Rotate  [Space] Hard Drop  [P] Pause  [R] Restart  [X] Exit\n";
+        cout << "[A] Left  [D] Right  [S] Down  [P] Pause  [R] Restart  [X] Exit\n";
     }
 
     bool canMove(Tetromino &t, int dx, int dy) {
-        for (int i = 0; i < 4; i++)
-            for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
                 if (t.shape[i][j]) {
                     int newX = t.x + j + dx;
                     int newY = t.y + i + dy;
                     if (newX < 0 || newX >= WIDTH || newY >= HEIGHT || (newY >= 0 && grid[newY][newX] != EMPTY))
                         return false;
                 }
+            }
+        }
         return true;
     }
 
@@ -100,7 +97,7 @@ public:
         for (int i = 0; i < 4; i++)
             for (int j = 0; j < 4; j++)
                 if (t.shape[i][j])
-                    grid[t.y + i][t.x + j] = t.color;
+                    grid[t.y + i][t.x + j] = t.blockChar;
     }
 
     void clearBoard() {
@@ -114,23 +111,18 @@ class TetrisGame {
 public:
     GameBoard board;
     Tetromino *currentPiece;
-    bool gameOver;
-    bool isPaused;
+    bool gameOver = false;
 
     TetrisGame() {
         srand(time(0));
         currentPiece = new Tetromino(rand() % 7);
-        gameOver = false;
-        isPaused = false;
     }
 
     void run() {
         while (!gameOver) {
             handleInput();
-            if (!isPaused) {
-                update();
-                render();
-            }
+            update();
+            render();
             usleep(500000);
         }
         cout << "Game Over!" << endl;
@@ -138,71 +130,84 @@ public:
 
 private:
     char getInput() {
-        struct termios oldt, newt;
-        tcgetattr(STDIN_FILENO, &oldt);
-        newt = oldt;
-        newt.c_lflag &= ~(ICANON | ECHO);
-        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-
+#ifdef _WIN32
+        if (_kbhit()) {
+            return _getch();
+        }
+#else
         int bytesAvailable;
         ioctl(STDIN_FILENO, FIONREAD, &bytesAvailable);
-        char key = 0;
         if (bytesAvailable > 0) {
+            char key;
             read(STDIN_FILENO, &key, 1);
+            return key;
         }
-
-        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-        return key;
+#endif
+        return 0;
     }
 
     void handleInput() {
         char key = getInput();
-        if (key == 'p') {
-            isPaused = !isPaused;
-            if (isPaused) {
-                cout << "Game Paused. Press 'p' to resume...\n";
-            }
-        } else if (!isPaused) {
-            if (key == 'a' && board.canMove(*currentPiece, -1, 0))
-                currentPiece->x--;  
-            else if (key == 'd' && board.canMove(*currentPiece, 1, 0))
-                currentPiece->x++;  
-            else if (key == 's' && board.canMove(*currentPiece, 0, 1))
-                currentPiece->y++;  
-            else if (key == ' ')  
-                hardDrop();
-            else if (key == 'w')
-                currentPiece->rotate();
-            else if (key == 'x')
-                exit(0);
-            else if (key == 'r')
-                restartGame();
-        }
+        if (key == 'a' && board.canMove(*currentPiece, -1, 0))
+            currentPiece->x--;  // Move left
+        else if (key == 'd' && board.canMove(*currentPiece, 1, 0))
+            currentPiece->x++;  // Move right
+        else if (key == 's' && board.canMove(*currentPiece, 0, 1))
+            currentPiece->y++;  // Move down
+        else if (key == 'x')
+            exitGame();  // Exit game
+        else if (key == 'p')
+            pauseGame(); // Pause game
+        else if (key == 'r')
+            restartGame(); // Restart game
     }
 
     void update() {
-        if (!board.canMove(*currentPiece, 0, 1)) {
+        if (board.canMove(*currentPiece, 0, 1))
+            currentPiece->y++;
+        else {
             board.placeTetromino(*currentPiece);
             delete currentPiece;
             currentPiece = new Tetromino(rand() % 7);
-        } else {
-            currentPiece->y++;
+            if (!board.canMove(*currentPiece, 0, 0))
+                gameOver = true;
         }
     }
 
-    void render() { board.draw(*currentPiece); }
-
-    void hardDrop() {
-        while (board.canMove(*currentPiece, 0, 1))
-            currentPiece->y++;
-        update();
+    void render() {
+        board.draw(*currentPiece);
     }
 
-    void restartGame() { board.clearBoard(); currentPiece = new Tetromino(rand() % 7); }
+    void exitGame() {
+        cout << "Exiting game...\n";
+        exit(0);
+    }
+
+    void pauseGame() {
+        cout << "Game paused. Press any key to continue...\n";
+        cin.get(); // Wait for user input
+    }
+
+    void restartGame() {
+        cout << "Restarting game...\n";
+        board.clearBoard();
+        delete currentPiece;
+        currentPiece = new Tetromino(rand() % 7);
+        gameOver = false;
+    }
 };
 
 int main() {
+#ifndef _WIN32
+    system("stty -icanon -echo"); // Disable terminal buffering for macOS/Linux
+#endif
+
     TetrisGame game;
     game.run();
+
+#ifndef _WIN32
+    system("stty icanon echo"); // Restore terminal settings
+#endif
+
     return 0;
 }
